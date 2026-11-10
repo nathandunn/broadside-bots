@@ -1,0 +1,4 @@
+# Same-origin only, so cross-origin isolation costs nothing; Godot 4.7's
+# shell asks for it (ensureCrossOriginIsolationHeaders).
+header Cross-Origin-Opener-Policy "same-origin"
+header Cross-Origin-Embedder-Policy "require-corp"

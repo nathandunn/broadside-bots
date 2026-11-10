@@ -1,5 +1,5 @@
 extends SceneTree
-## Headless checks + a small all-AI career sweep.
+## Headless checks + an all-AI career sweep per role.
 ## Run: godot --headless --path . -s tests/run_tests.gd
 
 var fails := 0
@@ -11,14 +11,17 @@ func check(cond: bool, what: String) -> void:
 
 func _init() -> void:
 	_test_markets()
+	_test_nations()
+	_test_reputation()
 	_test_voyage()
-	_test_combat()
+	_test_roles()
+	_test_battles()
 	_sweep()
 	print("DONE fails=%d" % fails)
 	quit(1 if fails > 0 else 0)
 
 func _test_markets() -> void:
-	var s := Sim.new_game("Trader", 1)
+	var s := Sim.new_game("Trader", "England", 1)
 	var before := s.chest
 	var p := Sim.buy_price(s, s.location, "cloth")
 	Sim.buy_good(s, "cloth", 5.0)
@@ -28,8 +31,58 @@ func _test_markets() -> void:
 	var d := World.distance_nm(World.port_by_id("bridgetown"), World.port_by_id("willemstad"))
 	check(d > 500.0 and d < 600.0, "Bridgetown–Willemstad ~550 nm (got %d)" % d)
 
+## The recorded wars drive friend and foe.
+func _test_nations() -> void:
+	var d1675 := 0
+	check(World.at_war("France", "Dutch", d1675), "1675: France at war with the Dutch")
+	check(World.at_war("France", "Spain", d1675), "1675: France at war with Spain")
+	check(not World.at_war("England", "France", d1675), "1675: England at peace with France")
+	check(World.allied("Dutch", "Spain", d1675), "1675: Dutch and Spain allied against France")
+	var d1690 := int((1690.0 - World.START_YEAR) * 365)
+	check(World.at_war("England", "France", d1690), "1690: Nine Years' War")
+	check(World.allied("England", "Dutch", d1690), "1690: England and the Dutch allies")
+	var d1705 := int((1705.0 - World.START_YEAR) * 365)
+	check(World.at_war("England", "Spain", d1705) and World.allied("France", "Spain", d1705), "1705: Spanish Succession lines")
+	var d1700 := int((1700.0 - World.START_YEAR) * 365)
+	check(Sim.war_signature(d1700) == "", "1700: general peace")
+	check(World.pardon_on_offer("England", int((1718.0 - World.START_YEAR) * 365)), "1718: Act of Grace on offer")
+
+## His ask: in good standing with England, hitting the French helps; hitting
+## the English hurts.
+func _test_reputation() -> void:
+	var s := Sim.new_game("Privateer", "England", 5, "England")
+	s.day = int((1690.0 - World.START_YEAR) * 365)   # England at war with France
+	s.reputation["England"] = 40
+	var fr := {"kind": "merchant", "nation": "France", "coin": 500.0, "crew": 15, "ship": Sim.make_ship("fluyt", ""), "cargo": {}}
+	var en := {"kind": "merchant", "nation": "England", "coin": 500.0, "crew": 15, "ship": Sim.make_ship("fluyt", ""), "cargo": {}}
+	var fx_fr := Sim.attack_effects(s, fr, "prize")
+	var fx_en := Sim.attack_effects(s, en, "prize")
+	check(fx_fr["legal"] and fx_fr["deltas"]["England"] > 0 and fx_fr["deltas"]["Dutch"] > 0 and fx_fr["deltas"]["France"] < 0,
+		"French prize: England and the Dutch (allies at war with France) pleased, France angered")
+	check(not fx_en["legal"] and fx_en["becomes_pirate"] and fx_en["deltas"]["England"] <= -30,
+		"English prize as an English privateer: piracy and betrayal")
+	var p := Sim.new_game("Pirate", "England", 6)
+	p.day = s.day
+	var fx_p := Sim.attack_effects(p, fr, "prize")
+	check(fx_p["deltas"]["England"] > 0, "a pirate preying on the French still pleases England at war with France")
+	# Port access follows standing.
+	p.reputation["England"] = 30
+	check(Sim.port_open(p, "bridgetown") == "", "a Friendly pirate may enter an English port")
+	p.reputation["England"] = 0
+	check(Sim.port_open(p, "bridgetown") != "", "otherwise the fort fires")
+	check(Sim.port_open(s, "saint_pierre") != "", "an English privateer can't enter a French port in wartime")
+	# Brethren of the coast.
+	var hostile := 0
+	for i in 200:
+		p.rng.seed = 900 + i
+		var e := {"kind": "pirate", "nation": "England", "personality": "Greedy pirate", "traits": World.PERSONALITIES["Greedy pirate"],
+			"ship": Sim.make_ship("brigantine", ""), "crew": 80, "morale": 80.0}
+		if Sim.npc_hostile(p, e):
+			hostile += 1
+	check(hostile == 0, "English pirates leave an English pirate be")
+
 func _test_voyage() -> void:
-	var s := Sim.new_game("Trader", 2)
+	var s := Sim.new_game("Trader", "England", 2)
 	check(Sim.set_sail(s, "st_johns") == "", "trader can sail to Antigua")
 	for i in 80:
 		if not s.encounter.is_empty():
@@ -38,13 +91,52 @@ func _test_voyage() -> void:
 			break
 		Sim.sail_day(s)
 	check(s.ended or s.location == "st_johns", "voyage reaches port or ends")
-	var p := Sim.new_game("Pirate", 3)
+	var p := Sim.new_game("Pirate", "England", 3)
 	check(Sim.can_sail_to(p, "bridgetown") != "", "pirate barred from Bridgetown")
 
-func _test_combat() -> void:
+func _test_roles() -> void:
+	# 1675: England at peace, so an English privateer sails under a French marque.
+	var pv := Sim.new_game("Privateer", "England", 10)
+	check(pv.patron == "France", "1675 English privateer carries a French commission (got %s)" % pv.patron)
+	# Trader buys a marque where the governor is at war.
+	var t := Sim.new_game("Trader", "France", 11)
+	var msg := Sim.office(t, "marque")
+	check(t.role == "Privateer" and t.patron == "France", "French trader buys a French marque: " + msg)
+	# Peace voids it.
+	t.day = int((1678.9 - World.START_YEAR) * 365)
+	Sim.rest(t, 1)
+	check(t.role == "Trader", "Peace of Nijmegen voids the marque")
+	# Navy: free stores at home, can't resign while poor.
+	var n := Sim.new_game("Navy", "England", 12)
+	check(Sim.store_price(n, "food") == 0.0, "navy victuals free at home")
+	var opts := Sim.office_options(n)
+	var resign_ok := false
+	for o in opts:
+		if o["id"] == "resign":
+			resign_ok = o["ok"]
+	check(not resign_ok, "a penniless lieutenant can't resign and buy a sloop")
+	# Turn pirate at sea.
+	n.location = ""
+	n.voyage = {"from": "bridgetown", "to": "st_johns", "total_nm": 100.0, "done_nm": 10.0}
+	Sim.turn_pirate(n)
+	check(n.role == "Pirate" and n.owns_ship and n.rep("England") < 0, "deserting with the King's ship")
+	# Pirate pardon by bribe in a friendly port.
+	var pr := Sim.new_game("Pirate", "England", 13)
+	pr.reputation["France"] = 30
+	pr.location = "saint_pierre"
+	pr.chest = 5000.0
+	Sim.office(pr, "pardon")
+	check(pr.role == "Trader" and pr.nation == "France" and pr.bounty == 0.0, "pardoned by the French governor")
+	# Shipyard.
+	var sy := Sim.new_game("Trader", "England", 14)
+	sy.chest = 10000.0
+	Sim.buy_ship(sy, "brigantine")
+	check(sy.ship["cls"] == "brigantine", "bought a brigantine")
+
+func _test_battles() -> void:
 	var wins := 0
-	for i in 200:
-		var s := Sim.new_game("Pirate", 100 + i)
+	for i in 60:
+		var s := Sim.new_game("Pirate", "England", 100 + i)
 		s.voyage = {"from": "st_thomas", "to": "oranjestad", "total_nm": 100.0, "done_nm": 50.0}
 		s.location = ""
 		var e := Sim.make_encounter(s)
@@ -52,104 +144,58 @@ func _test_combat() -> void:
 		e["hostile"] = false
 		e["ship"] = Sim.make_ship("fluyt", "")
 		e["crew"] = 17
+		e["morale"] = 45.0
+		e["personality"] = "Cautious merchant"
 		e["traits"] = World.PERSONALITIES["Cautious merchant"]
 		e["nation"] = "Dutch"
 		s.encounter = e
 		var r := Sim.resolve(s, "attack", {"range": "close", "shot": "grape", "board": true})
 		if r.get("outcome", "") == "prize":
 			wins += 1
-	print("pirate sloop vs fluyt prize rate: %.2f" % (wins / 200.0))
-	check(wins > 100, "a pirate sloop usually takes a fluyt")
+	print("pirate sloop vs fluyt prize rate: %.2f" % (wins / 60.0))
+	check(wins >= 50, "a faster pirate sloop runs down and takes a fluyt (got %d/60)" % wins)
+	# A sloop can claw off to windward from a frigate.
+	var away := 0
+	for i in 60:
+		var s2 := Sim.new_game("Pirate", "England", 300 + i)
+		s2.location = ""
+		s2.voyage = {"from": "st_thomas", "to": "oranjestad", "total_nm": 100.0, "done_nm": 50.0}
+		var e2 := Sim.make_encounter(s2)
+		e2["kind"] = "navy"
+		e2["nation"] = "Spain"
+		e2["ship"] = Sim.make_ship("frigate", "")
+		e2["crew"] = 140
+		e2["morale"] = 75.0
+		e2["personality"] = "Dutiful navy"
+		e2["traits"] = World.PERSONALITIES["Dutiful navy"]
+		e2["hostile"] = true
+		s2.encounter = e2
+		var r2 := Sim.resolve(s2, "flee", {})
+		if r2.get("outcome", "") in ["we_escaped", "stalemate"]:
+			away += 1
+	check(away >= 45, "sloop escapes a frigate most times (got %d/60)" % away)
 
-## All-AI careers with a dumb policy, to sanity-check the economy.
+## All-AI careers with a simple policy per role, to sanity-check the economy.
 func _sweep() -> void:
-	for role in ["Trader", "Pirate"]:
+	var setups := [["Trader", "England", ""], ["Pirate", "England", ""], ["Privateer", "England", ""], ["Navy", "England", ""]]
+	for st in setups:
+		var role: String = st[0]
 		var worth := []
 		var deaths := 0
 		var causes := {}
-		for i in 100:
-			var s := Sim.new_game(role, 1000 + i)
-			_play(s, 3 * 365)
+		var roles_end := {}
+		var prizes := 0
+		for i in 60:
+			var s := Sim.new_game(role, st[1], 1000 + i)
+			Policy.play(s, 3 * 365)
 			if not s.alive:
 				deaths += 1
 				var k: String = s.end_reason.substr(0, 28)
 				causes[k] = int(causes.get(k, 0)) + 1
+			roles_end[s.role] = int(roles_end.get(s.role, 0)) + 1
+			prizes += s.prizes_taken + s.pirates_taken
 			worth.append(Sim.net_worth(s))
 		worth.sort()
-		print("%s: median worth %d, p90 %d, dead %d%%" % [role, worth[50], worth[90], deaths])
+		print("%s: median worth %d, p90 %d, dead %d%%, prizes/career %.1f, ended as %s" % [role, worth[30], worth[54],
+			deaths * 100 / 60, prizes / 60.0, roles_end])
 		print("  causes: ", causes)
-
-func _play(s: GameState, days: int) -> void:
-	var ports := World.PORTS.map(func(p): return p["id"])
-	while not s.ended and s.day < days:
-		if s.at_sea():
-			if not s.encounter.is_empty():
-				var e: Dictionary = s.encounter
-				var act := "flee" if e["hostile"] else "sail_on"
-				if e["hostile"] and s.role == "Trader" and Sim.power(e["ship"], e["crew"], e["morale"]) > 1.5 * Sim.power(s.ship, s.crew, s.morale):
-					act = "surrender"
-				if s.role == "Pirate" and e["kind"] == "merchant":
-					act = "attack"
-				Sim.resolve(s, act, {"range": "close", "shot": "grape", "board": true})
-			else:
-				if float(s.ship["hull"]) < float(s.ship["hull_max"]) * 0.6 or Sim.days_of(s, "water") < 8.0:
-					Sim.head_home(s)
-				Sim.sail_day(s)
-			continue
-		# In port: sell everything, restock, trade, go.
-		for g in s.cargo.keys():
-			Sim.sell_good(s, g, float(s.cargo[g]))
-		if s.role == "Pirate":
-			Sim.share_out(s)
-			Sim.recruit(s, 20)
-		else:
-			Sim.pay_wages(s)
-			Sim.recruit(s, int(s.ship["crew_cap"]) - s.crew)
-		if s.role == "Trader" and s.chest < 1500.0:
-			Sim.withdraw(s, 1500.0 - s.chest)
-		Sim.rest(s, s.rng.randi_range(2, 5))
-		if s.role == "Pirate" and Sim.repair_cost(s) > s.chest:
-			Sim.rest(s, 6)
-		if s.role == "Trader":
-			Sim.pay_wages(s)
-		Sim.repair(s)
-		var need_food := s.crew * Sim.FOOD_PER_MAN * 45.0 - float(s.stores.get("food", 0.0))
-		var need_water := s.crew * Sim.WATER_PER_MAN * 45.0 - float(s.stores.get("water", 0.0))
-		if need_food > 0.0:
-			Sim.buy_store(s, "food", ceil(need_food))
-		if need_water > 0.0:
-			Sim.buy_store(s, "water", ceil(need_water))
-		if float(s.stores.get("powder", 0.0)) < 1.0:
-			Sim.buy_store(s, "powder", 1.0)
-		var dest := ""
-		if s.role == "Pirate":
-			if Sim.cruise(s, 20) != "":
-				return
-			continue
-		for tries in 20:
-			var d: String = ports[s.rng.randi_range(0, ports.size() - 1)]
-			if s.role == "Trader" and tries < 15:
-				var wants: Array = World.port_by_id(d)["wants"]
-				var here_p: Array = World.port_by_id(s.location)["produces"]
-				var ok := false
-				for g in here_p:
-					if g in wants:
-						ok = true
-				if not ok:
-					continue
-			if Sim.can_sail_to(s, d) == "":
-				dest = d
-				break
-		if dest == "":
-			return
-		if s.role == "Trader":
-			# Buy whatever this port produces cheapest.
-			var here := World.port_by_id(s.location)
-			var budget: float = max(0.0, s.chest - 600.0)
-			for g in here["produces"]:
-				var tons: float = min(max(0.0, s.cargo_free() - 5.0) / max(1, here["produces"].size()), floor(budget / here["produces"].size() / Sim.buy_price(s, s.location, g)))
-				Sim.buy_good(s, g, tons)
-			if s.chest > 3000.0:
-				Sim.bank(s, s.chest - 2000.0)
-		if Sim.set_sail(s, dest) != "":
-			return

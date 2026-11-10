@@ -4,16 +4,12 @@ Pirates! + Mayflower + Oregon Trail, in Godot 4. One captain, any role, eastern 
 
 Part of the Precog app suite: `broadside-bots.apps.precogsoftwareservices.com`. Full spec lives in the project doc `claude/broadside-bots.md`.
 
-## v0 (this release)
-- **Roles:** Trader (fluyt, wages, honest ports) and Pirate (sloop, shares, St Thomas as haven). A trader who fires on a ship of a nation at peace turns pirate on the spot.
-- **Voyage, Oregon Trail style:** daily ticks with pace (easy / steady / crowd sail), rations (full / half / short) and a rum ration. Food, water, powder, spares and medicine are tracked. Scurvy sets in after 6 weeks without fresh food; hurricane season runs June–November. Becalmings, fevers, desertion and mutiny all occur.
-- **Ports:** nine ports with supply/demand markets that recover daily, plus shipwright, tavern, wages, bank/purse and resting ashore (with careening). Pirates fence at St Thomas and share out by the articles: captain 2 shares, common fund kept back first.
-- **Cruising:** put out to hunt the sea lanes and come back, with "Make for port" to cut it short.
-- **Encounters:** merchants, navies and pirates, each captained by a personality (aggression, caution, greed, honour). You can sail on, flee, trade, attack or strike colours.
-- **Combat (auto-resolved, standing orders):** you choose range (close/long), shot (round/chain/grape), board and ram. Ramming hurts you too and locks hulls for boarding. Prizes give coin, cargo, stores and volunteers.
-- **Retire** in any port. The epilogue is set by your net worth.
-
-Coming next: v1 adds the 3D sea battle, Navy and Privateer roles, and role switching (marques, pardons, desertion). v2 adds the Atlantic crossing and Colonists, fleets, and your island as governor and home base. v3 adds the all-AI sim mode with stats.
+## v0.2 (this release)
+- **Four careers:** Trader, Pirate, Privateer and Navy, under any of England, France, the Dutch or Spain. You can switch: buy a letter of marque, take a commission, resign, buy a pardon (or the King's, in 1688 and 1717–18), or run up the black flag at sea.
+- **Nations and the recorded wars** from 1672 to 1720 decide friend and foe. Allies are nations at war with a common enemy. Your standing with each nation (Hostile, Neutral, Friendly, Honoured) opens or closes its ports, decides whether its navy hunts you, and moves when you fight. Hitting a nation's enemies pleases it and its allies; hitting a friend is betrayal. Every encounter previews who will think what if you take her.
+- **Pirates have nationalities.** Brethren of your own nation leave a pirate be, and a pirate in favour with a crown can use its ports.
+- **Real-time battles in 3D.** Steady wind and points of sail matter: a fore-and-aft sloop points ~45° off the wind, a square-rigger ~65°. Broadsides only bear abeam; round, chain and grape behave differently; reload times depend on crew. You can ram, grapple and board, and repel boarders. Merchants run, and strike once a stronger ship runs them down. Change orders mid-fight, or play it back at 1–64×.
+- **Voyages, Oregon Trail style** (unchanged from v0), plus a shipyard and Navy pay, victuals, prize money (3/8) and promotion.
 
 ## Layout
 ```
@@ -21,7 +17,10 @@ scripts/world.gd       static data: ports, goods, ships, wars, personalities
 scripts/game_state.gd  one career's state
 scripts/sim.gd         all rules (pure, headless-testable)
 scripts/main.gd        UI (chart + controls), built in code
-tests/run_tests.gd     unit checks + 100-career sweep per role
+scripts/battle.gd      the sea fight (pure, headless-testable)
+scripts/battle_view.gd 3D view of a fight, HUD, orders
+tests/run_tests.gd     unit checks + career sweep per role
+tests/policy.gd        the simple captain the sweep uses
 tests/ui_smoke.gd      drives the UI headless
 ```
 

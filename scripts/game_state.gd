@@ -5,7 +5,10 @@ extends RefCounted
 var rng := RandomNumberGenerator.new()
 
 # Captain
-var role := "Trader"          # Trader | Pirate (v0)
+var role := "Trader"          # Trader | Pirate | Privateer | Navy
+var nation := "England"       # nationality; the flag you fly unless you're a pirate
+var patron := ""              # Privateer: the power whose letter of marque you carry
+var navy_rank := ""           # Navy: Lieutenant | Commander | Captain
 var captain_name := "Captain Twist"
 var age := 25.0
 var day := 0                  # days since 1 Jan START_YEAR
@@ -16,9 +19,13 @@ var infamy := 0.0
 var reputation := {}          # nation -> -100..100
 var prizes_taken := 0
 var ships_sunk := 0
+var pirates_taken := 0
+var days_since_prize := 0     # Navy: the Admiralty expects results
+var last_pay_day := 0
 
 # Ship and crew
 var ship := {}
+var owns_ship := true         # false while you command a ship of the Crown
 var crew := 0
 var health := 90.0            # crew average 0..100
 var morale := 70.0            # 0..100
@@ -38,6 +45,7 @@ var rum_ration := true
 # World
 var markets := {}             # port id -> {good -> stock}
 var journal: Array[String] = []
+var war_note := ""            # last war/peace headline seen
 
 # End state
 var alive := true
@@ -68,3 +76,21 @@ func at_sea() -> bool:
 
 func year() -> int:
 	return World.START_YEAR + int(day / 365)
+
+func rep(n: String) -> int:
+	return int(reputation.get(n, 0))
+
+func add_rep(n: String, d: int) -> void:
+	if reputation.has(n):
+		reputation[n] = clamp(int(reputation[n]) + d, -100, 100)
+
+## The flag other ships judge you by: your patron's for a privateer,
+## your nation's for a trader or naval officer, none for a pirate.
+func flag() -> String:
+	match role:
+		"Pirate":
+			return ""
+		"Privateer":
+			return patron
+		_:
+			return nation

@@ -10,6 +10,15 @@ func _init():
 		await process_frame
 		main.refresh()
 		await process_frame
+		# Market basket: +/- then approve.
+		var chest_before: float = main.state.chest
+		main._bump("cloth", 5.0)
+		main._bump("food", 1.0)
+		main._bump("food", -1.0)
+		await process_frame
+		main._approve()
+		await process_frame
+		print(role, " basket: chest ", int(chest_before), " → ", int(main.state.chest), ", cloth ", main.state.cargo.get("cloth", 0.0))
 		if role == "Trader":
 			main.sail_to("st_johns")
 		else:

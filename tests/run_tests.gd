@@ -16,6 +16,8 @@ func _init() -> void:
 	_test_voyage()
 	_test_roles()
 	_test_battles()
+	_test_basket()
+	_test_passage()
 	_sweep()
 	print("DONE fails=%d" % fails)
 	quit(1 if fails > 0 else 0)
@@ -174,6 +176,61 @@ func _test_battles() -> void:
 		if r2.get("outcome", "") in ["we_escaped", "stalemate"]:
 			away += 1
 	check(away >= 45, "sloop escapes a frigate most times (got %d/60)" % away)
+
+## His ask: +/- a basket, see where you stand, then approve; say when it's
+## room or coin that stops you.
+func _test_basket() -> void:
+	var s := Sim.new_game("Trader", "England", 21)
+	var b := {"sugar": 5.0, "food": 1.0}
+	var q := Sim.basket_quote(s, b)
+	check(q["ok"] and float(q["spend"]) > 0.0, "a small basket is affordable")
+	var chest := s.chest
+	Sim.apply_basket(s, b)
+	check(absf(s.chest - float(q["chest_after"])) < 1.0, "approve costs what the quote said (%d vs %d)" % [s.chest, q["chest_after"]])
+	check(float(s.cargo.get("sugar", 0.0)) >= 5.0 and s.chest < chest, "the goods are aboard")
+	var msg := Sim.sell_good(s, "sugar", 2.0)
+	check("profit" in msg or "loss" in msg, "a sale says what it made: " + msg)
+	# Room: ask for more than the hold takes.
+	var big := Sim.basket_room(s, {}, "timber", 9999.0)
+	check(big["why"] != "" and float(big["tons"]) <= s.cargo_free() + 0.01, "a hold-full basket says why: " + String(big["why"]))
+	s.chest = 1.0
+	var poor := Sim.basket_room(s, {}, "silver", 5.0)
+	check(poor["why"] == "No coin" and float(poor["tons"]) == 0.0, "an empty chest says No coin (got %s)" % poor["why"])
+	s.chest = 1e6
+	s.cargo["sugar"] = float(s.cargo.get("sugar", 0.0)) + s.cargo_free()
+	var full := Sim.basket_room(s, {}, "cloth", 5.0)
+	check(full["why"] == "No room" and float(full["tons"]) == 0.0, "a full hold says No room (got %s)" % full["why"])
+	# Selling in the basket frees room for buying.
+	var swap := Sim.basket_quote(s, {"sugar": -10.0, "cloth": 10.0})
+	check(swap["ok"], "sell 10 and buy 10 fits a full hold")
+
+## Passage days come as a range, and the trade wind makes east slow.
+func _test_passage() -> void:
+	var s := Sim.new_game("Trader", "England", 31)
+	s.location = "willemstad"
+	var west := Sim.new_game("Trader", "England", 31)
+	var east := Sim.passage(s, "bridgetown")
+	var down := Sim.passage(west, "willemstad")
+	print("Bridgetown→Willemstad %d–%d d (%s); back %d–%d d (%s)" % [down["lo"], down["hi"], down["wind"], east["lo"], east["hi"], east["wind"]])
+	check(east["wind"] == "beating" and down["wind"] == "running", "east is a beat, west a run")
+	check(east["hi"] > down["hi"], "beating back east takes longer")
+	# The range should hold the real passage most times.
+	var inside := 0
+	var n := 200
+	for i in n:
+		var v := Sim.new_game("Trader", "England", 5000 + i)
+		var pa := Sim.passage(v, "st_thomas")
+		Sim.set_sail(v, "st_thomas")
+		var days := 0
+		while v.at_sea() and not v.ended and days < 80:
+			if not v.encounter.is_empty():
+				v.encounter = {}
+			Sim.sail_day(v)
+			days += 1
+		if days >= int(pa["lo"]) and days <= int(pa["hi"]):
+			inside += 1
+	print("passage range held %d/%d" % [inside, n])
+	check(inside >= int(n * 0.85), "passage range holds the real passage ≥85%% (got %d/%d)" % [inside, n])
 
 ## All-AI careers with a simple policy per role, to sanity-check the economy.
 func _sweep() -> void:

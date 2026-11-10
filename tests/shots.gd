@@ -14,6 +14,14 @@ func _init():
 	root.add_child(main)
 	await snap(tag + "_title")
 	main.pick_nation = "England"
+	main._start("Trader")
+	main.state.basis["sugar"] = 9.0
+	main.basket = {"sugar": -10.0, "cloth": 2.0, "food": 1.0}
+	main.refresh()
+	await snap(tag + "_market")
+	(main.panel.get_parent() as ScrollContainer).scroll_vertical = 520
+	await snap(tag + "_basket")
+	main.basket = {}
 	main._start("Privateer")
 	await snap(tag + "_port")
 	var s: GameState = main.state

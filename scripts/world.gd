@@ -3,7 +3,7 @@ extends RefCounted
 ## Static world data: the eastern Caribbean from 1675, with the recorded
 ## wars between the colonial powers driving who is friend and who is foe.
 
-const VERSION := "0.2.0"
+const VERSION := "0.2.1"
 const START_YEAR := 1675
 
 ## Trade goods. base = pieces of eight per ton.
@@ -80,6 +80,62 @@ const PORTS := [
 	{"id": "st_thomas",    "name": "Charlotte Amalie, St Thomas","nation": "Denmark", "lat": 18.34, "lon": -64.93,
 		"produces": [], "wants": ["silver", "spices"], "haven": true},
 ]
+
+## The NE trade wind: steady from the ENE across the eastern Caribbean all
+## year (bearing it blows FROM, degrees true).
+const TRADE_WIND_FROM := 70.0
+
+## Coarse coastlines inside the chart (lon, lat), from modern charts. The
+## Spanish Main runs along the bottom; Hispaniola's east end sits top left.
+const LAND := [
+	# Tierra Firme: Venezuela from Coro to the Orinoco mouths (closed along the chart's foot)
+	[Vector2(-70.0, 12.0), Vector2(-69.8, 11.9), Vector2(-69.9, 11.45), Vector2(-69.3, 11.5), Vector2(-68.4, 10.9),
+	 Vector2(-68.0, 10.5), Vector2(-67.0, 10.6), Vector2(-66.1, 10.6), Vector2(-65.0, 10.1), Vector2(-64.2, 10.5),
+	 Vector2(-63.5, 10.65), Vector2(-62.3, 10.7), Vector2(-61.85, 10.72), Vector2(-62.4, 10.5), Vector2(-62.6, 10.15),
+	 Vector2(-62.0, 9.95), Vector2(-61.2, 9.75), Vector2(-60.6, 9.5), Vector2(-70.0, 9.5)],
+	[Vector2(-61.93, 10.7), Vector2(-61.6, 10.75), Vector2(-60.95, 10.85), Vector2(-60.9, 10.15), Vector2(-61.0, 10.05),
+	 Vector2(-61.9, 10.05), Vector2(-61.55, 10.25), Vector2(-61.45, 10.55)],                       # Trinidad
+	[Vector2(-60.85, 11.15), Vector2(-60.5, 11.35), Vector2(-60.52, 11.25), Vector2(-60.8, 11.08)], # Tobago
+	[Vector2(-64.4, 11.0), Vector2(-64.2, 11.15), Vector2(-63.8, 11.15), Vector2(-63.8, 10.92), Vector2(-64.1, 10.9)], # Margarita
+	[Vector2(-69.16, 12.39), Vector2(-69.05, 12.38), Vector2(-68.73, 12.06), Vector2(-68.78, 12.02), Vector2(-69.0, 12.12),
+	 Vector2(-69.17, 12.3)],                                                                         # Curaçao
+	[Vector2(-68.42, 12.3), Vector2(-68.2, 12.25), Vector2(-68.2, 12.03), Vector2(-68.3, 12.05)],   # Bonaire
+	[Vector2(-70.0, 12.62), Vector2(-69.87, 12.42), Vector2(-70.0, 12.45)],                          # Aruba (edge)
+	[Vector2(-61.8, 12.0), Vector2(-61.6, 12.25), Vector2(-61.6, 12.05), Vector2(-61.75, 11.98)],   # Grenada
+	[Vector2(-61.27, 13.38), Vector2(-61.12, 13.38), Vector2(-61.12, 13.15), Vector2(-61.25, 13.15)], # St Vincent
+	[Vector2(-59.65, 13.33), Vector2(-59.43, 13.2), Vector2(-59.48, 13.05), Vector2(-59.63, 13.05)], # Barbados
+	[Vector2(-61.0, 14.1), Vector2(-60.88, 14.1), Vector2(-60.88, 13.72), Vector2(-61.08, 13.78)],   # St Lucia
+	[Vector2(-61.23, 14.88), Vector2(-60.95, 14.85), Vector2(-60.82, 14.6), Vector2(-60.85, 14.4), Vector2(-61.08, 14.45),
+	 Vector2(-61.2, 14.6)],                                                                          # Martinique
+	[Vector2(-61.48, 15.63), Vector2(-61.25, 15.58), Vector2(-61.25, 15.22), Vector2(-61.38, 15.2), Vector2(-61.48, 15.4)], # Dominica
+	[Vector2(-61.8, 16.35), Vector2(-61.6, 16.3), Vector2(-61.55, 16.0), Vector2(-61.7, 15.95), Vector2(-61.8, 16.1)], # Guadeloupe, Basse-Terre
+	[Vector2(-61.55, 16.5), Vector2(-61.2, 16.35), Vector2(-61.2, 16.25), Vector2(-61.55, 16.22)],  # Guadeloupe, Grande-Terre
+	[Vector2(-62.24, 16.81), Vector2(-62.14, 16.78), Vector2(-62.15, 16.68), Vector2(-62.23, 16.7)], # Montserrat
+	[Vector2(-61.9, 17.17), Vector2(-61.72, 17.17), Vector2(-61.67, 17.05), Vector2(-61.88, 17.0)], # Antigua
+	[Vector2(-61.88, 17.72), Vector2(-61.75, 17.65), Vector2(-61.75, 17.55), Vector2(-61.86, 17.6)], # Barbuda
+	[Vector2(-62.87, 17.42), Vector2(-62.7, 17.33), Vector2(-62.58, 17.1), Vector2(-62.66, 17.08), Vector2(-62.82, 17.28)], # St Kitts & Nevis
+	[Vector2(-63.0, 17.53), Vector2(-62.94, 17.51), Vector2(-62.95, 17.45), Vector2(-63.0, 17.46)], # St Eustatius
+	[Vector2(-63.15, 18.12), Vector2(-62.98, 18.1), Vector2(-63.0, 18.0), Vector2(-63.15, 18.03)],  # St Martin
+	[Vector2(-63.17, 18.17), Vector2(-62.97, 18.27), Vector2(-62.97, 18.22), Vector2(-63.12, 18.14)], # Anguilla
+	[Vector2(-65.05, 18.38), Vector2(-64.83, 18.38), Vector2(-64.83, 18.31), Vector2(-65.05, 18.31)], # St Thomas
+	[Vector2(-64.8, 18.37), Vector2(-64.68, 18.36), Vector2(-64.68, 18.31), Vector2(-64.8, 18.31)], # St John
+	[Vector2(-64.7, 18.45), Vector2(-64.55, 18.45), Vector2(-64.55, 18.4), Vector2(-64.7, 18.4)],   # Tortola
+	[Vector2(-64.9, 17.78), Vector2(-64.57, 17.77), Vector2(-64.57, 17.68), Vector2(-64.9, 17.68)], # St Croix
+	[Vector2(-67.27, 18.5), Vector2(-65.62, 18.38), Vector2(-65.6, 18.2), Vector2(-65.85, 18.0), Vector2(-66.5, 17.95),
+	 Vector2(-67.2, 17.95), Vector2(-67.2, 18.15)],                                                  # Puerto Rico
+	[Vector2(-65.58, 18.15), Vector2(-65.27, 18.13), Vector2(-65.27, 18.08), Vector2(-65.58, 18.1)], # Vieques
+	[Vector2(-70.0, 19.0), Vector2(-68.9, 19.0), Vector2(-68.33, 18.6), Vector2(-68.7, 18.2), Vector2(-69.6, 18.4),
+	 Vector2(-70.0, 18.25)],                                                                         # Hispaniola, east end
+]
+
+## Initial great-circle bearing from a to b, degrees true.
+static func bearing_deg(a: Dictionary, b: Dictionary) -> float:
+	var la1 := deg_to_rad(float(a["lat"]))
+	var la2 := deg_to_rad(float(b["lat"]))
+	var dlo := deg_to_rad(float(b["lon"]) - float(a["lon"]))
+	var y := sin(dlo) * cos(la2)
+	var x := cos(la1) * sin(la2) - sin(la1) * cos(la2) * cos(dlo)
+	return fposmod(rad_to_deg(atan2(y, x)), 360.0)
 
 ## Home port for each power.
 const HOME := {"England": "bridgetown", "France": "saint_pierre", "Dutch": "oranjestad", "Spain": "port_of_spain"}

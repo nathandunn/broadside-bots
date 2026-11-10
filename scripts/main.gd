@@ -11,6 +11,8 @@ const BAD := Color(0.6, 0.12, 0.08)
 var state: GameState
 var map: MapView
 var status: RichTextLabel
+var gauges: HFlowContainer
+var split: BoxContainer
 var panel: VBoxContainer
 var journal: RichTextLabel
 var bg: ColorRect
@@ -18,6 +20,9 @@ var desk: MarginContainer
 var view: BattleView
 var orders := {"range": "close", "shot": "round", "board": true, "ram": false}
 var pick_nation := "England"
+var basket := {}
+var basket_port := ""
+var step := 5.0
 
 class MapView extends Control:
 	var main: Node
@@ -26,15 +31,36 @@ class MapView extends Control:
 	const LAT0 := 9.5
 	const LAT1 := 19.0
 
+	## Same scale both ways (a degree of longitude is cos(lat) of a degree of
+	## latitude), so islands keep their true shape; the chart sits centred
+	## on the paper.
+	func _scale() -> float:
+		var kx := cos(deg_to_rad((LAT0 + LAT1) / 2.0))
+		return minf(size.x / ((LON1 - LON0) * kx), size.y / (LAT1 - LAT0))
+
+	func _frame() -> Rect2:
+		var k := _scale()
+		var w := (LON1 - LON0) * cos(deg_to_rad((LAT0 + LAT1) / 2.0)) * k
+		var h := (LAT1 - LAT0) * k
+		return Rect2((size - Vector2(w, h)) / 2.0, Vector2(w, h))
+
 	func project(lat: float, lon: float) -> Vector2:
-		var x := (lon - LON0) / (LON1 - LON0) * size.x
-		var y := (1.0 - (lat - LAT0) / (LAT1 - LAT0)) * size.y
-		return Vector2(x, y)
+		var f := _frame()
+		return f.position + Vector2((lon - LON0) / (LON1 - LON0) * f.size.x, (1.0 - (lat - LAT0) / (LAT1 - LAT0)) * f.size.y)
 
 	func _draw() -> void:
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0.55, 0.70, 0.75))
+		var fr := _frame()
+		draw_rect(fr, Color(0.55, 0.70, 0.75))
 		var s: GameState = main.state
 		var font := ThemeDB.fallback_font
+		for shape in World.LAND:
+			var poly := PackedVector2Array()
+			for v in shape:
+				poly.append(project(v.y, v.x))
+			draw_colored_polygon(poly, Color(0.80, 0.74, 0.55))
+			draw_polyline(poly + PackedVector2Array([poly[0]]), Color(0.42, 0.34, 0.2), 1.2)
+		draw_rect(fr, Color(0.42, 0.34, 0.2), false, 2.0)
+		_draw_wind(font)
 		if s != null and s.at_sea() and not s.voyage.is_empty() and not s.voyage.get("cruise", false):
 			var a := World.port_by_id(s.voyage["from"])
 			var b := World.port_by_id(s.voyage["to"])
@@ -69,6 +95,22 @@ class MapView extends Control:
 		draw_colored_polygon(pts, Color.BLACK if s.role == "Pirate" else World.COLOUR.get(s.flag(), Color.WHITE))
 		draw_polyline(pts + PackedVector2Array([pts[0]]), Color(0.16, 0.11, 0.07), 1.5)
 
+	## The trade wind, as an arrow blowing the way the wind goes.
+	func _draw_wind(font: Font) -> void:
+		# Top right, in the open Atlantic clear of the port names.
+		var fr := _frame()
+		var r := clampf(fr.size.x * 0.055, 14.0, 26.0)
+		var c := project(18.15, -58.95)
+		var to := deg_to_rad(World.TRADE_WIND_FROM + 180.0)
+		var d := Vector2(sin(to), -cos(to))
+		var ink := Color(0.16, 0.11, 0.07, 0.85)
+		draw_circle(c, r, Color(0.93, 0.88, 0.76, 0.55))
+		draw_line(c - d * r * 0.7, c + d * r * 0.7, ink, 2.5)
+		draw_colored_polygon(PackedVector2Array([c + d * r * 0.85, c + d * r * 0.4 + d.orthogonal() * r * 0.27,
+			c + d * r * 0.4 - d.orthogonal() * r * 0.27]), ink)
+		if fr.size.x >= 400.0:   # no room for the words on a phone chart
+			draw_string(font, c + Vector2(-r - 74.0, 4.0), "Trade wind", HORIZONTAL_ALIGNMENT_RIGHT, 70.0, 11, ink)
+
 	func _gui_input(event: InputEvent) -> void:
 		var s: GameState = main.state
 		if s == null or s.ended or s.at_sea():
@@ -92,23 +134,38 @@ func _ready() -> void:
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 6)
 	desk.add_child(root)
+	# Chart beside the controls on a wide screen, above them on a phone.
+	split = BoxContainer.new()
+	split.add_theme_constant_override("separation", 10)
+	split.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_child(split)
 
 	map = MapView.new()
 	map.main = self
 	map.custom_minimum_size = Vector2(0, 170)
 	map.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root.add_child(map)
+	map.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	split.add_child(map)
+
+	var side := VBoxContainer.new()
+	side.add_theme_constant_override("separation", 6)
+	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	split.add_child(side)
 
 	status = RichTextLabel.new()
 	status.bbcode_enabled = true
 	status.fit_content = true
 	status.add_theme_color_override("default_color", INK)
-	root.add_child(status)
+	side.add_child(status)
+	gauges = HFlowContainer.new()
+	gauges.add_theme_constant_override("h_separation", 8)
+	side.add_child(gauges)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root.add_child(scroll)
+	side.add_child(scroll)
 	panel = VBoxContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(panel)
@@ -131,7 +188,8 @@ func _layout() -> void:
 	get_window().content_scale_size = Vector2i(520, 760)
 	var sz := get_viewport_rect().size
 	var portrait := sz.y > sz.x
-	map.size_flags_stretch_ratio = 0.45 if portrait else 0.9
+	split.vertical = portrait
+	map.size_flags_stretch_ratio = 0.45 if portrait else 0.75
 	journal.custom_minimum_size.y = 90 if portrait else 120
 
 # ------------------------------------------------------------------ helpers
@@ -196,6 +254,8 @@ func refresh() -> void:
 	for c in panel.get_children():
 		c.queue_free()
 	map.queue_redraw()
+	for c in gauges.get_children():
+		c.queue_free()
 	if state == null:
 		_title_screen()
 		status.text = "[b]Broadside Bots[/b] v%s — choose your life, Captain." % World.VERSION
@@ -224,24 +284,56 @@ func _role_line(s: GameState) -> String:
 
 func _status() -> void:
 	var s := state
-	var where: String = World.port_by_id(s.location)["name"] if not s.at_sea() else \
-		("Cruising" if s.voyage.get("cruise", false) else "At sea → %s" % World.port_by_id(s.voyage["to"])["name"]) + \
-		" (%d of %d nm)" % [s.voyage["done_nm"], s.voyage["total_nm"]]
+	var where := ""
+	if not s.at_sea():
+		where = World.port_by_id(s.location)["name"]
+	elif s.voyage.get("cruise", false):
+		where = "Cruising (%d of %d leagues)" % [float(s.voyage["done_nm"]) / 3.0, float(s.voyage["total_nm"]) / 3.0]
+	else:
+		var left := Sim.days_to_go(s)
+		where = "At sea → %s, %d leagues to go, %s" % [World.port_by_id(s.voyage["to"])["name"],
+			(float(s.voyage["total_nm"]) - float(s.voyage["done_nm"])) / 3.0, _days_text(left.x, left.y)]
 	var lines := []
 	lines.append("[b]%s[/b], %s, aged %d — %s — %s" % [s.captain_name, _role_line(s), s.age, Sim.date_string(s), where])
-	lines.append("%s [i]%s[/i]%s: hull %d/%d, rig %d%%, %d guns, hold %d/%d t" % [
-		s.ship["name"], s.ship["label"], "" if s.owns_ship else " (the King's)", s.ship["hull"], s.ship["hull_max"], s.ship["rig"],
-		s.ship["guns"], s.cargo_used(), s.ship["cargo"]])
-	lines.append("Crew %d/%d · health %d · morale %d%s · food %d days · water %d days · powder %.1f t" % [
-		s.crew, s.ship["crew_cap"], s.health, s.morale,
-		(" · wages owed %d" % s.pay_owed) if s.pay_owed > 0.0 else "",
-		Sim.days_of(s, "food"), Sim.days_of(s, "water"), float(s.stores.get("powder", 0.0))])
+	lines.append("%s [i]%s[/i]%s, %d guns%s · powder %.1f t" % [s.ship["name"], s.ship["label"],
+		"" if s.owns_ship else " (the King's)", s.ship["guns"],
+		(" · [color=#992214]wages owed %d[/color]" % s.pay_owed) if s.pay_owed > 0.0 else "", float(s.stores.get("powder", 0.0))])
+	_gauges()
 	var st := []
 	for n in World.POWERS:
 		st.append("%s %d" % [n, s.rep(n)])
 	lines.append("Chest %d · purse %d%s · prizes %d · pirates taken %d · standing: %s" % [s.chest, s.purse,
 		(" · bounty %d" % s.bounty) if s.bounty > 0.0 else "", s.prizes_taken, s.pirates_taken, ", ".join(st)])
 	status.text = "\n".join(lines)
+
+## The ship at a glance: bars rather than numbers in a sentence.
+func _gauges() -> void:
+	var s := state
+	var green := Color(0.25, 0.48, 0.25)
+	var amber := Color(0.75, 0.55, 0.15)
+	var red := Color(0.65, 0.15, 0.1)
+	var f := func(v: float, m: float) -> Color: return green if v / m > 0.6 else (amber if v / m > 0.3 else red)
+	var hull: float = s.ship["hull"]
+	var hm: float = s.ship["hull_max"]
+	var food := minf(Sim.days_of(s, "food"), 99.0)
+	var water := minf(Sim.days_of(s, "water"), 99.0)
+	gauges.add_child(Gauge.make("Hull", hull, hm, f.call(hull, hm), "%d/%d" % [hull, hm]))
+	gauges.add_child(Gauge.make("Rig", s.ship["rig"], 100.0, f.call(s.ship["rig"], 100.0), "%d%%" % s.ship["rig"]))
+	gauges.add_child(Gauge.make("Crew", s.crew, s.ship["crew_cap"], f.call(s.crew, s.ship["crew_cap"]), "%d/%d" % [s.crew, s.ship["crew_cap"]]))
+	gauges.add_child(Gauge.make("Health", s.health, 100.0, f.call(s.health, 100.0), "%d" % s.health))
+	gauges.add_child(Gauge.make("Morale", s.morale, 100.0, f.call(s.morale, 100.0), "%d" % s.morale))
+	gauges.add_child(Gauge.make("Food", food, 45.0, f.call(food, 45.0), "%d days" % food))
+	gauges.add_child(Gauge.make("Water", water, 45.0, f.call(water, 45.0), "%d days" % water))
+	var after := -1.0
+	if not basket.is_empty() and not s.at_sea():
+		after = float(Sim.basket_quote(s, basket)["hold_after"])
+	gauges.add_child(Gauge.make("Hold", s.cargo_used(), s.ship["cargo"], Color(0.45, 0.33, 0.2),
+		"%d/%d t" % [s.cargo_used(), s.ship["cargo"]], after))
+
+func _days_text(lo: int, hi: int) -> String:
+	if lo == hi:
+		return "%d day%s" % [lo, "" if lo == 1 else "s"]
+	return "%d–%d days" % [lo, hi]
 
 func _title_screen() -> void:
 	_label(panel, "Pirates! meets the Mayflower meets the Oregon Trail. The eastern Caribbean, 1675: France is at war with the Dutch and Spain; England sits it out — for now.")
@@ -293,23 +385,23 @@ func _port_screen() -> void:
 	var port := World.port_by_id(s.location)
 	_label(panel, "%s (%s)" % [port["name"], port["nation"]], true)
 
-	_label(panel, "Market — price per ton (buy / sell)", true)
+	if basket_port != s.location:
+		basket.clear()
+		basket_port = s.location
+	_label(panel, "Market — per ton, buy / sell. Fill the basket, then approve.", true)
+	var stepr := _row(panel)
+	_label(stepr, "Step (tons)")
+	_option(stepr, ["1", "5", "10"], str(int(step)), _set_step)
 	for g in World.GOODS:
-		var r := _row(panel)
-		var held := float(s.cargo.get(g, 0.0))
-		_label(r, "%s: %d / %d  (aboard %d t)" % [World.GOODS[g]["name"], Sim.buy_price(s, s.location, g),
-			Sim.sell_price(s, s.location, g), held])
-		_btn(r, "Buy 10", func(): note(Sim.buy_good(s, g, 10.0)))
-		_btn(r, "Sell 10", func(): note(Sim.sell_good(s, g, 10.0)), held <= 0.0)
-		_btn(r, "Sell all", func(): note(Sim.sell_good(s, g, held)), held <= 0.0)
+		_basket_row(g, "%s  %d / %d" % [World.GOODS[g]["name"], Sim.buy_price(s, s.location, g),
+			Sim.sell_price(s, s.location, g)], step)
 
-	_label(panel, "Ship's stores", true)
-	var sr := _row(panel)
+	_label(panel, "Ship's stores — per ton", true)
 	for st in World.STORES:
-		var amt := 0.5 if st == "medicine" else 1.0
-		var cost := Sim.store_price(s, st) * amt
-		_btn(sr, "%s +%.1ft (%s)" % [World.STORES[st]["name"], amt, "free" if cost == 0.0 else str(int(cost))],
-			func(): note(Sim.buy_store(s, st, amt)))
+		var unit := Sim.store_price(s, st)
+		_basket_row(st, "%s  %s · %.1f t" % [World.STORES[st]["name"], "free" if unit == 0.0 else str(int(unit)),
+			float(s.stores.get(st, 0.0))], 0.5 if st == "medicine" else 1.0)
+	_basket_summary()
 
 	_label(panel, "Ashore", true)
 	var ar := _row(panel)
@@ -355,11 +447,103 @@ func _port_screen() -> void:
 		if p["id"] == s.location:
 			continue
 		var why := Sim.can_sail_to(s, p["id"])
-		_btn(dr, "%s (~%.0f d)" % [p["name"].split(",")[0], Sim.est_days(s, p["id"])],
-			func(): sail_to(p["id"]), why != "", why)
+		var pa := Sim.passage(s, p["id"])
+		_btn(dr, "%s · %d lg · %s, %s" % [p["name"].split(",")[0], pa["leagues"], _days_text(pa["lo"], pa["hi"]), pa["wind"]],
+			sail_to.bind(p["id"]), why != "", why)
+	_label(panel, "A league is 3 nautical miles. Days run from a fair wind every day to a slack one with a calm or a blow; beating east against the trade wind is slow.")
 
 func sail_to(id: String) -> void:
+	basket.clear()
 	note(Sim.set_sail(state, id))
+
+# ------------------------------------------------------------------ basket
+
+func _set_step(v: String) -> void:
+	step = float(v)
+	refresh()
+
+## One market line: picture, name and prices, then − qty +, and why + is
+## barred. A second line says what the goods aboard cost and what selling
+## here would make on each ton.
+func _basket_row(k: String, text: String, unit: float) -> void:
+	var s := state
+	var r := _row(panel)
+	var mark := 0
+	if World.GOODS.has(k):
+		var base: float = World.GOODS[k]["base"]
+		if Sim.buy_price(s, s.location, k) < base * 0.85:
+			mark = -1
+		elif Sim.sell_price(s, s.location, k) > base * 1.15:
+			mark = 1
+	r.add_child(GoodIcon.make(k, mark))
+	var name_l := _label(r, text)
+	name_l.custom_minimum_size = Vector2(200, 0)
+	var q: float = basket.get(k, 0.0)
+	var floor_t := -float(s.cargo.get(k, 0.0)) if World.GOODS.has(k) else 0.0
+	_btn(r, " − ", _bump.bind(k, -unit), q - 0.001 <= floor_t)
+	var qty := "0" if q == 0.0 else ("%+.1f t" % q if unit < 1.0 else "%+d t" % q)
+	var ql := _label(r, qty, false, GOOD if q > 0.0 else (BAD if q < 0.0 else INK))
+	ql.custom_minimum_size = Vector2(52, 0)
+	ql.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var room := Sim.basket_room(s, basket, k, unit)
+	_btn(r, " + ", _bump.bind(k, unit), float(room["tons"]) <= 0.0, room["why"])
+	if float(room["tons"]) <= 0.0:
+		_label(r, room["why"], false, BAD)
+	var held := float(s.cargo.get(k, 0.0))
+	if World.GOODS.has(k) and held > 0.0:
+		var paid: float = s.basis.get(k, 0.0)
+		var per := Sim.sell_price(s, s.location, k) - paid
+		var how := ("paid %d/t" % paid) if paid > 0.0 else "taken as prize"
+		var pl := _label(panel, "      %d t aboard, %s → sells here at %s%d a ton" % [held, how, "+" if per >= 0.0 else "−", absf(per)],
+			false, GOOD if per >= 0.0 else BAD)
+		pl.add_theme_font_size_override("font_size", 13)
+
+func _bump(k: String, d: float) -> void:
+	var s := state
+	var q: float = basket.get(k, 0.0)
+	if d > 0.0:
+		q += float(Sim.basket_room(s, basket, k, d)["tons"])
+	else:
+		var floor_t := -float(s.cargo.get(k, 0.0)) if World.GOODS.has(k) else 0.0
+		q = maxf(floor_t, q + d)
+	if absf(q) < 0.001:
+		basket.erase(k)
+	else:
+		basket[k] = q
+	refresh()
+
+func _basket_summary() -> void:
+	if basket.is_empty():
+		return
+	var q := Sim.basket_quote(state, basket)
+	var ok: bool = q["ok"]
+	_label(panel, "Basket", true)
+	var g := _row(panel)
+	g.add_child(Gauge.make("Hold", state.cargo_used(), q["cap"], Color(0.45, 0.33, 0.2),
+		"%d → %d / %d t" % [state.cargo_used(), q["hold_after"], q["cap"]], q["hold_after"], 230.0))
+	var top := maxf(state.chest, float(q["chest_after"]))
+	g.add_child(Gauge.make("Chest", state.chest, top, Color(0.75, 0.6, 0.15),
+		"%d → %d" % [state.chest, q["chest_after"]], maxf(0.0, float(q["chest_after"])), 230.0))
+	var line := "Spend %d · take %d" % [q["spend"], q["take"]]
+	if float(q["take"]) > 0.0:
+		line += " · %s on the sale %d" % ["profit" if float(q["gain"]) >= 0.0 else "loss", absf(float(q["gain"]))]
+	_label(panel, line, false, GOOD if float(q["gain"]) >= 0.0 else BAD)
+	if float(q["short"]) > 0.0:
+		_label(panel, "No coin: short by %d." % ceil(float(q["short"])), false, BAD)
+	if float(q["over"]) > 0.0:
+		_label(panel, "No room: %d t over what the hold takes." % ceil(float(q["over"])), false, BAD)
+	var r := _row(panel)
+	_btn(r, "Approve", _approve, not ok)
+	_btn(r, "Clear", _clear_basket)
+
+func _approve() -> void:
+	var msg := Sim.apply_basket(state, basket)
+	basket.clear()
+	note(msg)
+
+func _clear_basket() -> void:
+	basket.clear()
+	refresh()
 
 func _sea_screen() -> void:
 	var s := state

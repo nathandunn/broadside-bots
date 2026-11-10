@@ -82,6 +82,7 @@ static func new_game(role: String, nation: String = "England", seed: int = 0, pa
 			var here := World.port_by_id(s.location)
 			var g: String = here["produces"][0] if here["produces"].size() > 0 else "sugar"
 			s.cargo = {g: 20.0}
+			s.basis = {g: float(World.GOODS[g]["base"])}
 	_init_markets(s)
 	s.war_note = war_signature(s.day)
 	s.last_pay_day = s.day
@@ -260,7 +261,9 @@ static func buy_good(s: GameState, good: String, tons: float) -> String:
 	if tons <= 0.0:
 		return "Not enough coin."
 	s.chest -= cost
-	s.cargo[good] = float(s.cargo.get(good, 0.0)) + tons
+	var old := float(s.cargo.get(good, 0.0))
+	s.basis[good] = (float(s.basis.get(good, 0.0)) * old + cost) / (old + tons)
+	s.cargo[good] = old + tons
 	s.markets[s.location][good] = max(5.0, float(s.markets[s.location][good]) - tons)
 	return "Bought %d t of %s for %d." % [tons, World.GOODS[good]["name"], cost]
 
@@ -271,12 +274,14 @@ static func sell_good(s: GameState, good: String, tons: float) -> String:
 	if tons <= 0.0:
 		return "None aboard."
 	var got := lot_sell_value(s, s.location, good, tons)
+	var gain := got - float(s.basis.get(good, 0.0)) * tons
 	s.chest += got
 	s.cargo[good] = float(s.cargo[good]) - tons
 	if float(s.cargo[good]) <= 0.001:
 		s.cargo.erase(good)
 	s.markets[s.location][good] = float(s.markets[s.location][good]) + tons
-	return "Sold %d t of %s for %d." % [tons, World.GOODS[good]["name"], got]
+	return "Sold %d t of %s for %d (%s %d on what she cost)." % [tons, World.GOODS[good]["name"], got,
+		"profit" if gain >= 0.0 else "loss", absf(gain)]
 
 static func store_price(s: GameState, store: String) -> float:
 	var p: float = World.STORES[store]["price"]
@@ -433,7 +438,7 @@ static func office_options(s: GameState) -> Array:
 			why = "The governor doesn't trust you (needs Neutral or better)."
 		elif s.role == "Privateer" and s.patron == n:
 			why = "You already sail under a %s marque." % World.ADJ[n]
-		out.append({"id": "marque", "label": "Buy a %s letter of marque (%d) — legal prizes: %s" % [World.ADJ[n],
+		out.append({"id": "marque", "label": "Buy %s %s letter of marque (%d) — legal prizes: %s" % ["an" if World.ADJ[n][0] in "AEIOU" else "a", World.ADJ[n],
 			marque_fee(s, n), ", ".join(World.enemies_of(n, s.day))], "ok": why == "", "why": why})
 		if s.role == "Pirate":
 			var free := World.pardon_on_offer(n, s.day)
@@ -631,8 +636,10 @@ static func set_sail(s: GameState, port_id: String) -> String:
 	var b := World.port_by_id(port_id)
 	s.voyage = {"from": s.location, "to": port_id, "total_nm": World.distance_nm(a, b), "done_nm": 0.0}
 	s.location = ""
-	s.say("Weighed anchor for %s, %d leagues off." % [b["name"], s.voyage["total_nm"] / 3.0])
-	var need := World.distance_nm(a, b) / (float(PACE_NM[s.pace]) * float(s.ship["speed"]) * 0.95) * 1.5
+	var d := days_range(s, World.distance_nm(a, b), a, b)
+	s.say("Weighed anchor for %s, %d leagues off: %d–%d days, %s." % [b["name"], s.voyage["total_nm"] / 3.0, d.x, d.y,
+		wind_word(s, a, b)])
+	var need := float(d.y)
 	if days_of(s, "food") < need or days_of(s, "water") < need:
 		s.say("The purser frets: stores may not last the passage.")
 	return ""
@@ -661,9 +668,135 @@ static func head_home(s: GameState) -> String:
 	return ""
 
 static func est_days(s: GameState, port_id: String) -> float:
-	var from := World.port_by_id(s.location) if not s.at_sea() else World.port_by_id(s.voyage["from"])
-	var nm := World.distance_nm(from, World.port_by_id(port_id))
-	return nm / (float(PACE_NM[s.pace]) * float(s.ship["speed"]) * 0.95)
+	var p := passage(s, port_id)
+	return (float(p["lo"]) + float(p["hi"])) / 2.0
+
+# ------------------------------------------------------------------ wind
+
+## Fraction of her usual daily run a ship makes on this course. The recorded
+## trade wind blows steadily from the ENE, so running west is quick and
+## beating back east is slow (hence the Windward and Leeward Islands). A
+## fore-and-aft rig points higher and beats better; a square rig runs best.
+static func wind_factor(s: GameState, a: Dictionary, b: Dictionary) -> float:
+	var off: float = absf(wrapf(World.bearing_deg(a, b) - World.TRADE_WIND_FROM, -180.0, 180.0))
+	var rig: String = World.SHIPS[s.ship["cls"]]["rig"]
+	var point := 45.0 if rig == "fore_aft" else 65.0
+	var beat := 0.7 if rig == "fore_aft" else 0.55
+	var run := 0.95 if rig == "fore_aft" else 1.05
+	if off <= point:
+		return beat
+	if off <= point + 30.0:
+		return lerpf(beat, 1.0, (off - point) / 30.0)
+	if off >= 150.0:
+		return lerpf(1.0, run, (off - 150.0) / 30.0)
+	return 1.0
+
+static func wind_word(s: GameState, a: Dictionary, b: Dictionary) -> String:
+	var off: float = absf(wrapf(World.bearing_deg(a, b) - World.TRADE_WIND_FROM, -180.0, 180.0))
+	var point := 45.0 if World.SHIPS[s.ship["cls"]]["rig"] == "fore_aft" else 65.0
+	if off <= point + 10.0:
+		return "beating"
+	if off >= 135.0:
+		return "running"
+	return "reaching"
+
+static func _manning(s: GameState) -> float:
+	return clamp(float(s.crew) / (float(s.ship["crew_cap"]) * 0.4), 0.3, 1.0)
+
+## Her usual day's run in nm before the luck of the wind: pace, hull, rig, hands.
+static func _day_run(s: GameState) -> float:
+	return float(PACE_NM[s.pace]) * float(s.ship["speed"]) * (float(s.ship["rig"]) / 100.0) * _manning(s)
+
+static func _storm_p(s: GameState) -> float:
+	return 0.025 * (3.0 if in_hurricane_season(s) else 1.0) * (1.5 if s.pace == "crowd" else 1.0)
+
+## Days for nm on a course from a to b, as a likely range: a fair wind every
+## day at best; at worst a slack one, and a share of days becalmed or hove to
+## in a blow (more of them in hurricane season).
+static func days_range(s: GameState, nm: float, a: Dictionary, b: Dictionary) -> Vector2i:
+	var run := _day_run(s) * wind_factor(s, a, b)
+	if run <= 0.0 or nm <= 0.0:
+		return Vector2i(0, 0)
+	var lost := 0.04 + _storm_p(s) * 0.7
+	var lo := int(floor(nm / (run * 1.15)))
+	var hi := int(ceil(nm / (run * 0.75) / (1.0 - lost)))
+	return Vector2i(max(1, lo), max(1, hi))
+
+## {leagues, lo, hi, wind} for a passage from here (or from the voyage's start).
+static func passage(s: GameState, port_id: String) -> Dictionary:
+	var a := World.port_by_id(s.location) if not s.at_sea() else World.port_by_id(s.voyage["from"])
+	var b := World.port_by_id(port_id)
+	var nm := World.distance_nm(a, b)
+	var d := days_range(s, nm, a, b)
+	return {"leagues": nm / 3.0, "lo": d.x, "hi": d.y, "wind": wind_word(s, a, b)}
+
+## Days still to run on the current passage.
+static func days_to_go(s: GameState) -> Vector2i:
+	if not s.at_sea() or s.voyage.get("cruise", false):
+		return Vector2i(0, 0)
+	var a := World.port_by_id(s.voyage["from"])
+	var b := World.port_by_id(s.voyage["to"])
+	return days_range(s, float(s.voyage["total_nm"]) - float(s.voyage["done_nm"]), a, b)
+
+# ------------------------------------------------------------------ basket
+
+## A market basket is {good or store: tons}. Positive buys; negative sells
+## (cargo only). It is quoted before it's approved, so the captain sees
+## where he stands.
+static func basket_quote(s: GameState, basket: Dictionary) -> Dictionary:
+	var spend := 0.0
+	var take := 0.0
+	var tons := 0.0
+	var gain := 0.0
+	for k in basket:
+		var t: float = basket[k]
+		if World.GOODS.has(k):
+			if t > 0.0:
+				spend += lot_buy_cost(s, s.location, k, t)
+			elif t < 0.0:
+				var v := lot_sell_value(s, s.location, k, -t)
+				take += v
+				gain += v + float(s.basis.get(k, 0.0)) * t
+		else:
+			spend += store_price(s, k) * t
+		tons += t
+	var chest_after := s.chest + take - spend
+	var hold_after := s.cargo_used() + tons
+	var cap: float = s.ship["cargo"]
+	var over := maxf(0.0, hold_after - cap) if tons > 0.0 else 0.0
+	return {"spend": spend, "take": take, "gain": gain, "chest_after": chest_after, "hold_after": hold_after, "cap": cap,
+		"short": maxf(0.0, -chest_after), "over": over, "ok": chest_after >= -0.01 and over <= 0.001}
+
+## How much more of k the basket can take, up to want tons, and why not more:
+## "No room" or "No coin" ("" when the whole step fits).
+static func basket_room(s: GameState, basket: Dictionary, k: String, want: float) -> Dictionary:
+	var unit := 0.5 if k == "medicine" else 1.0
+	var have: float = basket.get(k, 0.0)
+	var q := basket_quote(s, basket)
+	var t := minf(want, floor((float(q["cap"]) - float(q["hold_after"])) / unit) * unit) if have >= 0.0 else want
+	var why := "No room" if t < want else ""
+	while t > 0.0:
+		var b2 := basket.duplicate()
+		b2[k] = have + t
+		if float(basket_quote(s, b2)["chest_after"]) >= -0.01:
+			break
+		t -= unit
+		why = "No coin"
+	return {"tons": maxf(0.0, t), "why": why}
+
+## Sell first (it frees room and coin), then buy.
+static func apply_basket(s: GameState, basket: Dictionary) -> String:
+	var q := basket_quote(s, basket)
+	if not q["ok"]:
+		return "No room in the hold." if float(q["over"]) > 0.0 else "Not enough coin."
+	var out := []
+	for k in basket:
+		if World.GOODS.has(k) and float(basket[k]) < 0.0:
+			out.append(sell_good(s, k, -float(basket[k])))
+	for k in basket:
+		if float(basket[k]) > 0.0:
+			out.append(buy_good(s, k, basket[k]) if World.GOODS.has(k) else buy_store(s, k, basket[k]))
+	return " ".join(out)
 
 ## Advance one day at sea. Returns an event {type, text} or {} for a quiet day.
 static func sail_day(s: GameState) -> Dictionary:
@@ -754,13 +887,13 @@ static func sail_day(s: GameState) -> Dictionary:
 		return _end(s, "Captain %s died in his cot, aged %d." % [s.captain_name, s.age])
 
 	# Distance
-	var manning: float = clamp(float(s.crew) / (float(s.ship["crew_cap"]) * 0.4), 0.3, 1.0)
-	var nm: float = float(PACE_NM[s.pace]) * float(s.ship["speed"]) * s.rng.randf_range(0.6, 1.3) \
-		* (float(s.ship["rig"]) / 100.0) * manning
+	var nm: float = _day_run(s) * s.rng.randf_range(0.6, 1.3)
+	if not s.voyage.get("cruise", false):
+		nm *= wind_factor(s, World.port_by_id(s.voyage["from"]), World.port_by_id(s.voyage["to"]))
 
 	# One event a day at most
 	var ev := {}
-	var storm_p := 0.025 * (3.0 if in_hurricane_season(s) else 1.0) * (1.5 if s.pace == "crowd" else 1.0)
+	var storm_p := _storm_p(s)
 	var roll := s.rng.randf()
 	var mutiny_p := 0.03 if s.role == "Navy" else 0.08
 	if s.morale < 15.0 and s.rng.randf() < mutiny_p:
@@ -1212,7 +1345,9 @@ static func _take_prize(s: GameState, e: Dictionary) -> String:
 		for g in e["cargo"]:
 			var t: float = min(float(e["cargo"][g]), s.cargo_free())
 			if t > 0.0:
-				s.cargo[g] = float(s.cargo.get(g, 0.0)) + t
+				var had := float(s.cargo.get(g, 0.0))
+				s.basis[g] = float(s.basis.get(g, 0.0)) * had / (had + t)
+				s.cargo[g] = had + t
 				took += " %d t %s," % [t, World.GOODS[g]["name"].to_lower()]
 		took = (" Coin %d;%s" % [coin, took.trim_suffix(",")]) if took != "" else " Coin %d." % coin
 	# Her stores come with her: crews lived off their prizes.

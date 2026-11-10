@@ -34,6 +34,7 @@ var days_since_fresh := 0
 var days_since_plunder := 0
 var stores := {}              # store id -> tons
 var cargo := {}               # good id -> tons
+var basis := {}               # good id -> average price paid per ton (prize goods cost nothing)
 
 # Position
 var location := ""            # port id, or "" at sea
